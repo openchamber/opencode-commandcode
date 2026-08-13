@@ -26,6 +26,7 @@ import {
   SESSION_HEADER,
 } from "./constants.js";
 import { log } from "./log.js";
+import { setMcpServers } from "./mcp-names.js";
 import {
   encodeCommandModelSelection,
   resolveCommandModelSelection,
@@ -298,6 +299,22 @@ export const CommandCodePlugin: Plugin = async (
       // Always seed the live catalog so the provider is discoverable.
       refreshCommandModels();
       ensureProviderConfig(config as Record<string, any>, getCommandModels());
+
+      // Seed native MCP server names (from `mcp:` in opencode config) so the
+      // proxy can map tool names <server>_<tool> ↔ mcp__<server>__<tool>.
+      // This is what lets the gateway agent see OpenCode's MCP tools and
+      // lets OpenCode execute the calls natively via its own MCP clients.
+      const mcpConfig = (config as Record<string, any>).mcp;
+      if (mcpConfig && typeof mcpConfig === "object") {
+        setMcpServers(
+          Object.entries(mcpConfig as Record<string, unknown>)
+            .filter(([, entry]) => {
+              if (!entry || typeof entry !== "object") return true;
+              return (entry as { enabled?: unknown }).enabled !== false;
+            })
+            .map(([name]) => name),
+        );
+      }
     },
 
     "chat.headers": async (hookInput, output) => {

@@ -11,6 +11,7 @@ import type {
   WireTool,
   WireUserContent,
 } from "./gateway-types.js";
+import { toWireName } from "./mcp-names.js";
 
 const IMAGE_OMITTED =
   "[image omitted: the active model is text-only]";
@@ -301,7 +302,9 @@ export function openaiToolsToWire(tools: OpenAITool[]): WireTool[] {
       const name = t.function?.name;
       if (!name) return null;
       return {
-        name,
+        // Gateway expects MCP tools as mcp__<server>__<tool>; OpenCode
+        // names them <server>_<tool> natively. Map so agents see them.
+        name: toWireName(name),
         description: t.function?.description || name,
         input_schema:
           (t.function?.parameters as Record<string, unknown>) || {
@@ -359,7 +362,7 @@ export function openaiMessagesToWire(
           content.push({
             type: "tool-call",
             toolCallId: id,
-            toolName: name,
+            toolName: toWireName(name),
             input,
           });
         }
@@ -377,7 +380,7 @@ export function openaiMessagesToWire(
           {
             type: "tool-result",
             toolCallId,
-            toolName: msg.name || "",
+            toolName: msg.name ? toWireName(msg.name) : "",
             output: {
               type: "text",
               value: extractTextContent(msg.content),

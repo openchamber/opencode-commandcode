@@ -96,6 +96,14 @@ async function main() {
     "../src/gateway.ts"
   );
   const { detectCommandCode } = await import("../src/detect.ts");
+  const {
+    setMcpServers,
+    getMcpServers,
+    toWireName,
+    toNativeName,
+    isNativeMcpName,
+    resetMcpNamesForTests,
+  } = await import("../src/mcp-names.ts");
 
   // --- credentials ---
   assert.ok(listCommandAuthCandidates().length > 0);
@@ -317,6 +325,75 @@ claude-sonnet-5                      recommended
   ]);
   assert.equal(tools.length, 2);
   assert.equal(tools[0]?.name, "bash");
+
+  // --- MCP tool-name mapping (OpenCode native <-> Command Code wire) ---
+  resetMcpNamesForTests();
+  setMcpServers(["linear", "filesystem"]);
+  assert.deepEqual([...getMcpServers()].sort(), ["filesystem", "linear"]);
+  assert.equal(toWireName("linear_list_issues"), "mcp__linear__list_issues");
+  assert.equal(toWireName("filesystem_read"), "mcp__filesystem__read");
+  assert.equal(toWireName("bash"), "bash");
+  assert.equal(toWireName("mcp__linear__list_issues"), "mcp__linear__list_issues");
+  assert.equal(toNativeName("mcp__linear__list_issues"), "linear_list_issues");
+  assert.equal(toNativeName("mcp__filesystem__read"), "filesystem_read");
+  assert.equal(toNativeName("mcp__unknown__thing"), "mcp__unknown__thing");
+  assert.equal(toNativeName("bash"), "bash");
+  assert.equal(isNativeMcpName("linear_get_issue"), true);
+  assert.equal(isNativeMcpName("bash"), false);
+
+  // Wire conversion must rename MCP tools so the gateway agent sees them.
+  const mappedTools = openaiToolsToWire([
+    {
+      type: "function",
+      function: {
+        name: "linear_list_issues",
+        description: "list issues",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "bash",
+        description: "shell",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+  ]);
+  assert.equal(mappedTools[0]?.name, "mcp__linear__list_issues");
+  assert.equal(mappedTools[1]?.name, "bash");
+
+  // History conversion must rename MCP tool calls/results consistently.
+  const wiredHistory = openaiMessagesToWire(
+    [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "linear_list_issues", arguments: "{}" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        name: "linear_list_issues",
+        content: "[]",
+      },
+    ],
+    { vision: false },
+  );
+  const histAssistant = wiredHistory.messages.find((m) => m.role === "assistant");
+  const histToolCall = (histAssistant?.content as Array<{ toolName?: string }>)?.[0];
+  assert.equal(histToolCall?.toolName, "mcp__linear__list_issues");
+  const histTool = wiredHistory.messages.find((m) => m.role === "tool");
+  const histResult = (histTool?.content as Array<{ toolName?: string }>)?.[0];
+  assert.equal(histResult?.toolName, "mcp__linear__list_issues");
+  resetMcpNamesForTests();
 
   // --- compact / context ---
   const adviceOk = assessContext(10_000, 256_000);

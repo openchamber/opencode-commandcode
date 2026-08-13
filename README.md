@@ -30,7 +30,7 @@ Default live-test target is **Laguna S 2.1 free** (`poolside/laguna-s-2.1-free`,
 
 ### Keep agent loops, files, and context moving
 
-OpenCode tool calls park and resume (MCP-prefixed tools are tracked separately). Attachments (images, PDFs, text/binary) pass through. Auto-compact tips and tiered client compact run before the 256k window overflows. Per-turn and session usage come from SSE `usage` plus `GET /v1/usage`.
+OpenCode tool calls park and resume. MCP tools configured natively in OpenCode (`mcp:` in `opencode.json`) are mapped both ways — OpenCode's `<server>_<tool>` ↔ the gateway's `mcp__<server>__<tool>` — so the agent sees them and OpenCode executes them with its own MCP clients. Attachments (images, PDFs, text/binary) pass through. Auto-compact tips and tiered client compact run before the 256k window overflows. Per-turn and session usage come from SSE `usage` plus `GET /v1/usage`.
 
 ## Quick start
 

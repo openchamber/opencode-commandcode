@@ -39,6 +39,7 @@ import {
 import type { WireMessage, WireTool, WireUsage } from "./gateway-types.js";
 import { emptyUsage } from "./gateway-types.js";
 import { log } from "./log.js";
+import { toNativeName, toWireName } from "./mcp-names.js";
 import {
   conversationKeyFromMessages,
   getSessionUsage,
@@ -447,19 +448,22 @@ async function handleChatCompletions(
         continue;
       }
       if (event.kind === "tool_call") {
+        // Map gateway mcp__<server>__<tool> back to the OpenCode native
+        // <server>_<tool> so OpenCode executes it via its own MCP client.
+        const nativeName = toNativeName(event.name);
         if (event.providerExecuted) {
           // Server-executed tool — surface as reasoning note, do not park.
           yield {
             kind: "reasoning",
-            text: `[mcp/tool] ${event.name} (provider-executed)\n`,
+            text: `[mcp/tool] ${nativeName} (provider-executed)\n`,
           } satisfies GatewayMappedEvent;
-          recordToolCall(conversationKey, event.name);
+          recordToolCall(conversationKey, nativeName);
           continue;
         }
-        recordToolCall(conversationKey, event.name);
+        recordToolCall(conversationKey, nativeName);
         const pending: ParkedToolCall = {
           id: event.id,
-          name: event.name,
+          name: nativeName,
           arguments: event.arguments,
           resolve: () => {},
           reject: () => {},
@@ -489,7 +493,7 @@ async function handleChatCompletions(
           const assistantContent = assistantToolCalls.map((t) => ({
             type: "tool-call" as const,
             toolCallId: t.id,
-            toolName: t.name,
+            toolName: toWireName(t.name),
             input: safeParse(t.arguments),
           }));
           const nextMessages: WireMessage[] = [
@@ -507,7 +511,7 @@ async function handleChatCompletions(
                   {
                     type: "tool-result",
                     toolCallId: tool.id,
-                    toolName: tool.name,
+                    toolName: toWireName(tool.name),
                     output: { type: "text", value: result },
                   },
                 ],

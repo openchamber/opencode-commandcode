@@ -7,6 +7,7 @@ import {
   emptyUsage,
   type WireUsage,
 } from "./gateway-types.js";
+import { isNativeMcpName } from "./mcp-names.js";
 
 export type ToolUsageStat = {
   name: string;
@@ -35,7 +36,9 @@ function isMcpToolName(name: string): boolean {
   return (
     name.startsWith("mcp__") ||
     name.startsWith("mcp_") ||
-    /(^|\.)mcp($|\.)/i.test(name)
+    /(^|\.)mcp($|\.)/i.test(name) ||
+    // Native OpenCode MCP names (<server>_<tool>) recorded after mapping.
+    isNativeMcpName(name)
   );
 }
 
