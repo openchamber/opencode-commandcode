@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/opencode-commandcode",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Command Code in OpenCode — Go-plan ($1) browser OAuth, gateway proxy, Laguna S 2.1, tools/MCP, attachments, compact, usage.",
   "license": "MIT",
   "type": "module",
