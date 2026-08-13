@@ -54,6 +54,9 @@ export type WireUsage = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  reasoningTokens?: number;
+  /** Estimated USD from the gateway finish event, when provided. */
+  costUsd?: number;
 };
 
 export type GenerateBody = {
@@ -124,11 +127,23 @@ export type StreamEvent =
       totalUsage?: {
         inputTokens?: number;
         outputTokens?: number;
+        reasoningTokens?: number;
+        cachedInputTokens?: number;
+        costUSD?: number;
+        costUsd?: number;
+        cost_usd?: number;
+        total_cost_usd?: number;
+        totalCostUSD?: number;
+        cost?: number;
         inputTokenDetails?: {
           cacheReadTokens?: number;
           cacheWriteTokens?: number;
         };
       };
+      costUSD?: number;
+      costUsd?: number;
+      cost_usd?: number;
+      total_cost_usd?: number;
       systemPromptTokens?: number;
     }
   | { type: "error"; error?: unknown }
@@ -144,11 +159,69 @@ export function emptyUsage(): WireUsage {
   };
 }
 
+function asFiniteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function costFromUnknown(...candidates: unknown[]): number {
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const o = candidate as Record<string, unknown>;
+    const cost =
+      asFiniteNumber(o.costUSD) ||
+      asFiniteNumber(o.costUsd) ||
+      asFiniteNumber(o.cost_usd) ||
+      asFiniteNumber(o.total_cost_usd) ||
+      asFiniteNumber(o.totalCostUSD) ||
+      asFiniteNumber(o.cost);
+    if (cost > 0) return cost;
+  }
+  return 0;
+}
+
+/** Map a gateway `finish` event's usage/cost fields onto WireUsage. */
+export function usageFromFinishEvent(event: {
+  totalUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+    inputTokenDetails?: {
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}): WireUsage {
+  const usage = emptyUsage();
+  const total = event.totalUsage;
+  if (total) {
+    usage.inputTokens = asFiniteNumber(total.inputTokens);
+    usage.outputTokens = asFiniteNumber(total.outputTokens);
+    usage.cacheReadTokens =
+      asFiniteNumber(total.inputTokenDetails?.cacheReadTokens) ||
+      asFiniteNumber(total.cachedInputTokens);
+    usage.cacheWriteTokens = asFiniteNumber(
+      total.inputTokenDetails?.cacheWriteTokens,
+    );
+    const reasoning = asFiniteNumber(total.reasoningTokens);
+    if (reasoning > 0) usage.reasoningTokens = reasoning;
+  }
+  const cost = costFromUnknown(total, event);
+  if (cost > 0) usage.costUsd = cost;
+  return usage;
+}
+
 export function addUsage(a: WireUsage, b: WireUsage): WireUsage {
+  const reasoningTokens = (a.reasoningTokens ?? 0) + (b.reasoningTokens ?? 0);
+  const costUsd = (a.costUsd ?? 0) + (b.costUsd ?? 0);
   return {
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
     cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
     cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(costUsd > 0 ? { costUsd } : {}),
   };
 }

@@ -12,8 +12,11 @@ import {
 import {
   discoverCommandModels,
   type DiscoveredModelMeta,
+  type ModelCostRates,
 } from "./model-discover.js";
 import { log } from "./log.js";
+
+export type { ModelCostRates };
 
 export type CommandModel = {
   id: string;
@@ -28,6 +31,8 @@ export type CommandModel = {
   free?: boolean;
   /** Supported effort levels from Command Code (empty → model decides). */
   efforts?: CommandEffort[];
+  /** Advertised $/1M token rates (OpenCode `model.cost`). */
+  cost?: ModelCostRates;
 };
 
 const CATALOG_TTL_MS = 30 * 60 * 1000;
@@ -69,6 +74,7 @@ function metaToModel(meta: DiscoveredModelMeta): CommandModel {
     vision: meta.vision,
     free: meta.free || undefined,
     efforts: meta.efforts.length ? meta.efforts : undefined,
+    cost: meta.cost,
   };
 }
 

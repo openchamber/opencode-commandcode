@@ -36,6 +36,7 @@ async function main() {
   const {
     parseListModelsOutput,
     parseModelsMarkdown,
+    parseAdvertisedCost,
   } = await import("../src/model-discover.ts");
   const {
     encodeCommandModelSelection,
@@ -81,7 +82,9 @@ async function main() {
     getSessionUsage,
     totalUsageAcrossSessions,
     usageToOpenAI,
+    withEstimatedCost,
   } = await import("../src/usage.ts");
+  const { usageFromFinishEvent } = await import("../src/gateway-types.ts");
   const {
     mapStreamEvent,
     buildGenerateBody,
@@ -148,10 +151,11 @@ claude-sonnet-5                      recommended
   assert.equal(parsedList.length, 3);
   assert.equal(parsedList[0]?.id, "deepseek/deepseek-v4-pro");
   const md = parseModelsMarkdown(`
-| Id | Name | Context | Efforts | Best for |
-|---|---|---|---|---|
-| \`poolside/laguna-s-2.1-free\` | Laguna S 2.1 | 256K | — | coding |
-| \`claude-sonnet-5\` | Claude Sonnet 5 | 1M | low, medium, high, xhigh, max | agents |
+| Id | Name | Context | Efforts | $/1M in/out · cache read | Best for |
+|---|---|---|---|---|---|
+| \`poolside/laguna-s-2.1-free\` | Laguna S 2.1 | 256K | — | $0/$0 · cache $0 | coding |
+| \`claude-sonnet-5\` | Claude Sonnet 5 | 1M | low, medium, high, xhigh, max | $3/$15 · cache $0.3 (write $3.75) | agents |
+| \`deepseek/deepseek-v4-pro\` | DeepSeek V4 Pro | 1M | high, max | $0.435/$0.87 · cache $0.003625 | reasoning |
 `);
   assert.equal(md.get("claude-sonnet-5")?.contextWindow, 1_000_000);
   assert.deepEqual(md.get("claude-sonnet-5")?.efforts, [
@@ -161,6 +165,20 @@ claude-sonnet-5                      recommended
     "xhigh",
     "max",
   ]);
+  assert.deepEqual(md.get("claude-sonnet-5")?.cost, {
+    input: 3,
+    output: 15,
+    cache: { read: 0.3, write: 3.75 },
+  });
+  assert.deepEqual(md.get("deepseek/deepseek-v4-pro")?.cost, {
+    input: 0.435,
+    output: 0.87,
+    cache: { read: 0.003625, write: 0 },
+  });
+  assert.deepEqual(
+    parseAdvertisedCost("$2/$10 · cache $0.2 (write $2.5)"),
+    { input: 2, output: 10, cache: { read: 0.2, write: 2.5 } },
+  );
 
   const selection = resolveCommandModelSelection("laguna", "high");
   const encoded = encodeCommandModelSelection(selection);
@@ -356,8 +374,39 @@ claude-sonnet-5                      recommended
   assert.equal(snap.tools.find((t) => t.name === "bash")?.calls, 2);
   assert.equal(snap.tools.find((t) => t.name === "mcp__filesystem__read")?.mcp, true);
   const openaiUsage = usageToOpenAI(totalUsageAcrossSessions());
-  assert.equal(openaiUsage.prompt_tokens, 100);
+  // OpenAI contract: prompt_tokens is inclusive of cache read/write
+  // (Command Code inputTokens excludes them, so 100 + 20 + 5 = 125).
+  assert.equal(openaiUsage.prompt_tokens, 125);
   assert.equal(openaiUsage.completion_tokens, 50);
+  assert.equal(openaiUsage.total_tokens, 175);
+  assert.equal(openaiUsage.prompt_tokens_details?.cached_tokens, 20);
+  assert.equal(openaiUsage.prompt_tokens_details?.cache_write_tokens, 5);
+
+  const finishUsage = usageFromFinishEvent({
+    totalUsage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      inputTokenDetails: { cacheReadTokens: 10, cacheWriteTokens: 5 },
+      costUSD: 0.0012,
+    },
+  });
+  assert.equal(finishUsage.inputTokens, 100);
+  assert.equal(finishUsage.cacheReadTokens, 10);
+  assert.equal(finishUsage.costUsd, 0.0012);
+  const finishOpenAI = usageToOpenAI(finishUsage);
+  assert.equal(finishOpenAI.prompt_tokens, 115);
+  assert.equal(finishOpenAI.cost_usd, 0.0012);
+
+  const estimated = withEstimatedCost(
+    {
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    },
+    { input: 0.435, output: 0.87, cache: { read: 0.003625, write: 0 } },
+  );
+  assert.equal(estimated.costUsd, 1.305);
 
   // --- gateway helpers ---
   const headers = buildAuthHeaders({ apiKey: "test-key", sessionId: "s1" });
@@ -401,6 +450,36 @@ claude-sonnet-5                      recommended
     }).kind,
     "finish",
   );
+
+  const finishMapped = mapStreamEvent({
+    type: "finish",
+    finishReason: "stop",
+    totalUsage: {
+      inputTokens: 50,
+      outputTokens: 10,
+      reasoningTokens: 3,
+      inputTokenDetails: { cacheReadTokens: 5, cacheWriteTokens: 2 },
+      costUSD: 0.01,
+    },
+  });
+  assert.equal(finishMapped.kind, "finish");
+  if (finishMapped.kind === "finish") {
+    assert.equal(finishMapped.usage.inputTokens, 50);
+    assert.equal(finishMapped.usage.cacheReadTokens, 5);
+    assert.equal(finishMapped.usage.cacheWriteTokens, 2);
+    assert.equal(finishMapped.usage.reasoningTokens, 3);
+    assert.equal(finishMapped.usage.costUsd, 0.01);
+    const openai = usageToOpenAI(finishMapped.usage);
+    // prompt_tokens follows the OpenAI contract: inclusive of cached tokens
+    // (Command Code inputTokens excludes them, so 50 + 5 + 2 = 57).
+    assert.equal(openai.prompt_tokens, 57);
+    assert.equal(openai.completion_tokens, 10);
+    assert.equal(openai.total_tokens, 67);
+    assert.equal(openai.prompt_tokens_details?.cached_tokens, 5);
+    assert.equal(openai.prompt_tokens_details?.cache_write_tokens, 2);
+    assert.equal(openai.completion_tokens_details?.reasoning_tokens, 3);
+    assert.equal(openai.cost_usd, 0.01);
+  }
 
   // CLI-compatible retry: transient stream error before visible output is
   // discarded, then the exact same request is retried.
@@ -748,6 +827,10 @@ claude-sonnet-5                      recommended
   const toolsText = await chatTools.text();
   assert.ok(toolsText.includes("call_test_bash_1"));
   assert.ok(toolsText.includes("tool_calls") || toolsText.includes('"bash"'));
+  assert.ok(
+    toolsText.includes('"prompt_tokens"') && !toolsText.includes('"prompt_tokens":0'),
+    "parked tool-call turn must forward non-zero usage",
+  );
 
   const chatResume = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
     method: "POST",

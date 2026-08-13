@@ -46,7 +46,9 @@ import {
   recordToolCall,
   recordTurnUsage,
   totalUsageAcrossSessions,
+  usageChunkFields,
   usageToOpenAI,
+  withEstimatedCost,
 } from "./usage.js";
 
 const DEFAULT_PROXY_PORT = 8797;
@@ -471,7 +473,7 @@ async function handleChatCompletions(
         continue;
       }
       if (event.kind === "finish") {
-        turnUsage = event.usage;
+        turnUsage = withEstimatedCost(event.usage, modelMeta.cost);
         systemPromptTokens = event.systemPromptTokens;
         finishReason = event.finishReason;
         recordTurnUsage(
@@ -519,6 +521,14 @@ async function handleChatCompletions(
             pendingTools.clear();
             yield* runTurn(resumed, tools, null);
           };
+          // Forward this turn's usage before parking. Omitting it emits
+          // prompt_tokens:0 and OpenCode overwrites the session meter.
+          yield {
+            kind: "finish",
+            finishReason,
+            usage: turnUsage,
+            systemPromptTokens,
+          } satisfies GatewayMappedEvent;
           yield { type: "__park__", tools: assistantToolCalls };
           return;
         }
@@ -534,6 +544,7 @@ async function handleChatCompletions(
     }
 
     // Stream ended without explicit finish.
+    turnUsage = withEstimatedCost(turnUsage, modelMeta.cost);
     recordTurnUsage(
       conversationKey,
       model,
@@ -624,7 +635,7 @@ function streamOpenAIResponse(
                 finish_reason: toolCalls.length ? "tool_calls" : "stop",
               },
             ],
-            ...(includeUsage ? { usage: usageToOpenAI(usage) } : {}),
+            ...(includeUsage ? usageChunkFields(usage) : {}),
           };
           controller.enqueue(
             new TextEncoder().encode(JSON.stringify(payload)),
@@ -778,7 +789,7 @@ function streamOpenAIResponse(
         created,
         model,
         choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-        ...(includeUsage ? { usage: usageToOpenAI(usage) } : {}),
+        ...(includeUsage ? usageChunkFields(usage) : {}),
       });
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();

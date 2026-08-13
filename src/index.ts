@@ -120,7 +120,7 @@ function buildProviderModel(
       input: model.vision ? ["text", "image"] : ["text"],
       output: ["text"],
     },
-    cost: zeroCost(),
+    cost: model.cost ?? zeroCost(),
     limit: {
       context: model.contextWindow,
       output: model.maxTokens,
@@ -158,6 +158,7 @@ function buildConfigModelEntry(model: CommandModel): Record<string, unknown> {
       includeUsage: true,
     },
     variants,
+    cost: model.cost ?? zeroCost(),
   };
 }
 

@@ -7,7 +7,7 @@ import { basename } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   GENERATE_ROUTE,
-  emptyUsage,
+  usageFromFinishEvent,
   getApiBaseUrl,
   type GenerateBody,
   type StreamEvent,
@@ -340,25 +340,7 @@ export function mapStreamEvent(event: StreamEvent): GatewayMappedEvent {
       };
     }
     case "finish": {
-      const usage = emptyUsage();
-      const total = event.totalUsage as
-        | {
-            inputTokens?: number;
-            outputTokens?: number;
-            inputTokenDetails?: {
-              cacheReadTokens?: number;
-              cacheWriteTokens?: number;
-            };
-          }
-        | undefined;
-      if (total) {
-        usage.inputTokens = total.inputTokens ?? 0;
-        usage.outputTokens = total.outputTokens ?? 0;
-        usage.cacheReadTokens =
-          total.inputTokenDetails?.cacheReadTokens ?? 0;
-        usage.cacheWriteTokens =
-          total.inputTokenDetails?.cacheWriteTokens ?? 0;
-      }
+      const usage = usageFromFinishEvent(event);
       const finishReason =
         event.finishReason === "tool-calls"
           ? "tool_calls"

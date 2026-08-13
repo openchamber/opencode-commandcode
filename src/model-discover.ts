@@ -11,6 +11,12 @@ import { isCommandEffort, LAGUNA_MODEL_ID } from "./constants.js";
 import { resolveCommandCodeExecutable } from "./executable-path.js";
 import { log } from "./log.js";
 
+export type ModelCostRates = {
+  input: number;
+  output: number;
+  cache: { read: number; write: number };
+};
+
 export type DiscoveredModelMeta = {
   id: string;
   name: string;
@@ -21,7 +27,32 @@ export type DiscoveredModelMeta = {
   free: boolean;
   efforts: CommandEffort[];
   reasoning: boolean;
+  /** Advertised $/1M rates from Command Code models.md, when present. */
+  cost?: ModelCostRates;
 };
+
+/**
+ * Parse advertised `$in/$out · cache $read (write $write)` rates from a
+ * models.md table row. Write is optional and defaults to 0.
+ */
+export function parseAdvertisedCost(line: string): ModelCostRates | undefined {
+  const m = line.match(
+    /\$([0-9]*\.?[0-9]+)\/\$([0-9]*\.?[0-9]+)\s*[·*]\s*cache\s*\$([0-9]*\.?[0-9]+)(?:\s*\(write\s*\$([0-9]*\.?[0-9]+)\))?/i,
+  );
+  if (!m) return undefined;
+  const input = Number(m[1]);
+  const output = Number(m[2]);
+  const read = Number(m[3]);
+  const write = m[4] != null ? Number(m[4]) : 0;
+  if (![input, output, read, write].every((n) => Number.isFinite(n))) {
+    return undefined;
+  }
+  return {
+    input,
+    output,
+    cache: { read, write },
+  };
+}
 
 /**
  * Command Code deliberately models vision support as an exclusion list. Read
@@ -152,6 +183,7 @@ export function parseModelsMarkdown(md: string): Map<string, DiscoveredModelMeta
     const vision =
       /vision|multimodal|image/i.test(line) ||
       /kimi|minimax|gemini|inkling|step-/i.test(id);
+    const cost = parseAdvertisedCost(line);
     map.set(id, {
       id,
       name,
@@ -161,6 +193,7 @@ export function parseModelsMarkdown(md: string): Map<string, DiscoveredModelMeta
       free,
       efforts,
       reasoning: efforts.length > 0,
+      ...(cost ? { cost } : {}),
     });
     // Case-insensitive alias for CLI lowercase ids
     map.set(id.toLowerCase(), map.get(id)!);
@@ -290,6 +323,7 @@ export function discoverCommandModels(): DiscoveredModelMeta[] {
       free,
       efforts: enrich?.efforts ?? [],
       reasoning: enrich ? enrich.reasoning : true,
+      ...(enrich?.cost ? { cost: enrich.cost } : {}),
     });
   }
 
@@ -315,6 +349,7 @@ export function discoverCommandModels(): DiscoveredModelMeta[] {
       free: true,
       efforts: [],
       reasoning: true,
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
     });
   }
 

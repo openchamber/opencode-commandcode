@@ -152,22 +152,79 @@ export function resetUsageStore(): void {
   sessions.clear();
 }
 
-export function usageToOpenAI(usage: WireUsage): {
+export type ModelCostRates = {
+  input: number;
+  output: number;
+  cache: { read: number; write: number };
+};
+
+/** Fill `costUsd` from advertised $/1M rates when the gateway omitted it. */
+export function withEstimatedCost(
+  usage: WireUsage,
+  rates?: ModelCostRates | null,
+): WireUsage {
+  if ((usage.costUsd ?? 0) > 0) return usage;
+  if (!rates) return usage;
+  const costUsd =
+    (usage.inputTokens / 1e6) * rates.input +
+    (usage.outputTokens / 1e6) * rates.output +
+    (usage.cacheReadTokens / 1e6) * rates.cache.read +
+    (usage.cacheWriteTokens / 1e6) * rates.cache.write;
+  if (!(costUsd > 0)) return usage;
+  return { ...usage, costUsd };
+}
+
+/** Omit empty usage so OpenCode does not overwrite the session meter with zeros. */
+export function usageChunkFields(
+  usage: WireUsage,
+): { usage: OpenAIUsage } | Record<string, never> {
+  const openai = usageToOpenAI(usage);
+  if (openai.prompt_tokens <= 0 && openai.completion_tokens <= 0) return {};
+  return { usage: openai };
+}
+
+export type OpenAIUsage = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   prompt_tokens_details?: {
-    cached_tokens: number;
-    cache_write_tokens: number;
+    cached_tokens?: number;
+    cache_write_tokens?: number;
   };
-} {
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+  };
+  /** Estimated USD from the Command Code gateway (not a billing statement). */
+  cost_usd?: number;
+};
+
+/**
+ * Convert Command Code wire usage into an OpenAI-compatible usage object.
+ *
+ * OpenAI contract: `prompt_tokens` is the INCLUSIVE prompt total and
+ * `prompt_tokens_details.cached_tokens` is a subset of it. Command Code
+ * reports `inputTokens` excluding cached tokens (same as Anthropic), so
+ * sum them back in — consumers (OpenCode) derive the non-cached count by
+ * subtracting the details.
+ */
+export function usageToOpenAI(usage: WireUsage): OpenAIUsage {
+  const cached = usage.cacheReadTokens;
+  const cacheWrite = usage.cacheWriteTokens;
+  const prompt = usage.inputTokens + cached + cacheWrite;
+  const completion = usage.outputTokens;
+  const details: NonNullable<OpenAIUsage["prompt_tokens_details"]> = {};
+  if (cached > 0) details.cached_tokens = cached;
+  if (cacheWrite > 0) details.cache_write_tokens = cacheWrite;
+  const reasoning = usage.reasoningTokens ?? 0;
+  const cost = usage.costUsd ?? 0;
   return {
-    prompt_tokens: usage.inputTokens,
-    completion_tokens: usage.outputTokens,
-    total_tokens: usage.inputTokens + usage.outputTokens,
-    prompt_tokens_details: {
-      cached_tokens: usage.cacheReadTokens,
-      cache_write_tokens: usage.cacheWriteTokens,
-    },
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...(Object.keys(details).length ? { prompt_tokens_details: details } : {}),
+    ...(reasoning > 0
+      ? { completion_tokens_details: { reasoning_tokens: reasoning } }
+      : {}),
+    ...(cost > 0 ? { cost_usd: cost } : {}),
   };
 }
