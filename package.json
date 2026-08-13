@@ -1,0 +1,65 @@
+{
+  "name": "@openchamber/opencode-commandcode",
+  "version": "0.4.0",
+  "description": "Command Code in OpenCode — Go-plan ($1) browser OAuth, gateway proxy, Laguna S 2.1, tools/MCP, attachments, compact, usage.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./opencode-commandcode.js",
+  "module": "./opencode-commandcode.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./opencode-commandcode.js",
+      "default": "./opencode-commandcode.js"
+    }
+  },
+  "files": [
+    "dist",
+    "opencode-commandcode.js"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "bun test/smoke.ts",
+    "test:live": "bun test/live-laguna.ts",
+    "test:live:matrix": "bun test/live-matrix.ts",
+    "test:opencode": "bash test/opencode-e2e.sh",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openchamber/opencode-commandcode.git"
+  },
+  "homepage": "https://github.com/openchamber/opencode-commandcode",
+  "bugs": {
+    "url": "https://github.com/openchamber/opencode-commandcode/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "command-code",
+    "commandcode",
+    "laguna",
+    "poolside",
+    "oauth",
+    "openai-compatible",
+    "ai",
+    "llm",
+    "streaming",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.15"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.3"
+  }
+}

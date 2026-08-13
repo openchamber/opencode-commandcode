@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 828 180" width="828" height="180" role="img" aria-label="opencode-commandcode - Command Code in OpenCode, Laguna S 2.1 gateway">
+  <style>
+    .mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
+    .sans { font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif; }
+    .pulse { animation: pulse 2.4s ease-in-out infinite; }
+    .rise1 { animation: rise 900ms cubic-bezier(0.16,1,0.3,1) 100ms both; }
+    .rise2 { animation: rise 900ms cubic-bezier(0.16,1,0.3,1) 200ms both; }
+    .rise3 { animation: rise 900ms cubic-bezier(0.16,1,0.3,1) 300ms both; }
+    .sweep { transform-origin: 40px 0; transform: scaleX(0); animation: sweep 850ms cubic-bezier(0.16,1,0.3,1) 400ms forwards; }
+    .scan { animation: scan 3.6s cubic-bezier(0.45,0,0.55,1) 1.3s infinite; }
+    .blink { animation: blink 1.05s steps(1) infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 1; }
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes sweep { to { transform: scaleX(1); } }
+    @keyframes scan {
+      0% { transform: translateX(0); opacity: 0; }
+      8% { opacity: 1; }
+      62% { transform: translateX(748px); opacity: 1; }
+      72%, 100% { transform: translateX(748px); opacity: 0; }
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .pulse, .rise1, .rise2, .rise3, .sweep, .scan, .blink { animation: none; }
+      .rise1, .rise2, .rise3 { opacity: 1; transform: none; }
+      .sweep { transform: scaleX(1); }
+      .scan { opacity: 0; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0c1412"/>
+      <stop offset="55%" stop-color="#12241f"/>
+      <stop offset="100%" stop-color="#1a3328"/>
+    </linearGradient>
+    <linearGradient id="title" x1="92" y1="0" x2="680" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f4f7f5"/>
+      <stop offset="75%" stop-color="#d8e8df"/>
+      <stop offset="100%" stop-color="#7dcea0"/>
+    </linearGradient>
+    <linearGradient id="scan_g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7dcea0" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#a8e0c0" stop-opacity="1"/>
+      <stop offset="1" stop-color="#7dcea0" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a8e0c0"/>
+      <stop offset="100%" stop-color="#e8b86d"/>
+    </linearGradient>
+    <clipPath id="rc"><rect x="40" y="138" width="748" height="4"/></clipPath>
+  </defs>
+
+  <rect width="828" height="180" rx="10" fill="url(#bg)"/>
+  <rect x="12" y="12" width="804" height="156" rx="8" fill="none" stroke="#2a3f36" stroke-width="1.25"/>
+
+  <rect x="28" y="6" width="168" height="14" fill="#0c1412"/>
+  <text class="mono" x="34" y="17" fill="#6f8a7c" font-size="11" letter-spacing="0.08em">OTTO · COMMAND CODE</text>
+
+  <g transform="translate(40, 44)">
+    <rect width="36" height="36" rx="8" fill="#15241e" stroke="#3a5248" stroke-width="1"/>
+    <path d="M18 8 L28 14 L28 26 L18 32 L8 26 L8 14 Z" fill="none" stroke="#7dcea0" stroke-width="2"/>
+    <path d="M14 18 L17.5 21.5 L24 14" fill="none" stroke="#e8b86d" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle class="pulse" cx="27" cy="11" r="2" fill="#7dcea0"/>
+  </g>
+
+  <text class="sans rise1" x="92" y="68" fill="url(#title)" font-size="30" font-weight="700" letter-spacing="-0.03em">opencode-commandcode</text>
+  <text class="mono rise2" x="92" y="98" fill="#9bb5a8" font-size="15">Command Code in OpenCode — Laguna S 2.1 gateway</text>
+  <text class="mono rise3" x="92" y="122" fill="#6f8a7c" font-size="12">Go-plan OAuth  ·  tools / MCP  ·  attachments &amp; usage</text>
+
+  <g transform="translate(690, 40)" aria-hidden="true">
+    <text class="mono" x="0" y="0" fill="#6f8a7c" font-size="10">laguna</text>
+    <rect x="0" y="48" width="10" height="16" rx="2" fill="#2a3f36"/>
+    <rect x="16" y="36" width="10" height="28" rx="2" fill="#2a3f36"/>
+    <rect x="32" y="22" width="10" height="42" rx="2" fill="url(#bar)" opacity="0.85"/>
+    <rect x="48" y="28" width="10" height="36" rx="2" fill="#2a3f36"/>
+    <rect x="64" y="14" width="10" height="50" rx="2" fill="#7dcea0"/>
+    <text class="mono blink" x="78" y="64" fill="#7dcea0" font-size="12">_</text>
+  </g>
+
+  <rect class="sweep" x="40" y="138" width="748" height="4" rx="2" fill="#2a3f36"/>
+  <g clip-path="url(#rc)">
+    <rect class="scan" x="40" y="138" width="64" height="4" fill="url(#scan_g)"/>
+  </g>
+</svg>

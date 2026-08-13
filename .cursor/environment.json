@@ -1,0 +1,5 @@
+{
+  "name": "opencode-commandcode",
+  "install": "export PATH=\"$HOME/.local/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$PATH\" && (command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash) && (command -v opencode >/dev/null || curl -fsSL https://opencode.ai/install | bash) && npm config set prefix \"$HOME/.local\" && npm i -g command-code@latest && bun install && bun run build",
+  "start": "export PATH=\"$HOME/.local/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$PATH\" && echo \"command-code=$(command-code --version 2>/dev/null || cmd --version)\" && echo \"opencode=$(opencode --version)\" && echo \"bun=$(bun --version)\""
+}
