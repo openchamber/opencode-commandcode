@@ -77,6 +77,40 @@ function zeroCost() {
   };
 }
 
+function billedCostUsd(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const usage = (value as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== "object") return undefined;
+  const raw = (usage as { cost_usd?: unknown }).cost_usd;
+  const cost = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+}
+
+/** Bridge Command Code's exact billed USD into OpenCode's supported billed-cost metadata. */
+export function commandCodeMetadataExtractor() {
+  const metadata = (value: unknown) => {
+    const cost = billedCostUsd(value);
+    if (cost === undefined) return undefined;
+    return { copilot: { totalNanoAiu: Math.round(cost * 100_000_000_000) } };
+  };
+  return {
+    async extractMetadata({ parsedBody }: { parsedBody: unknown }) {
+      return metadata(parsedBody);
+    },
+    createStreamExtractor() {
+      let result: ReturnType<typeof metadata>;
+      return {
+        processChunk(chunk: unknown) {
+          result = metadata(chunk) ?? result;
+        },
+        buildMetadata() {
+          return result;
+        },
+      };
+    },
+  };
+}
+
 function buildProviderModel(
   model: CommandModel,
   id: string,
@@ -210,6 +244,7 @@ function ensureProviderConfig(
       baseURL,
       apiKey: "command-code-proxy",
       includeUsage: true,
+      metadataExtractor: commandCodeMetadataExtractor(),
       ...existingOptions,
     },
     models: {
@@ -329,6 +364,7 @@ export const CommandCodePlugin: Plugin = async (
         return {
           baseURL: getCommandProxyBaseUrl(),
           apiKey: "command-code-proxy",
+          metadataExtractor: commandCodeMetadataExtractor(),
           async fetch(
             requestInput: RequestInfo | URL,
             init?: RequestInit,

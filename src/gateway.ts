@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { COMMAND_CODE_GATEWAY_VERSION } from "./constants.js";
 import {
   GENERATE_ROUTE,
+  costFromProviderMetadata,
   usageFromFinishEvent,
   getApiBaseUrl,
   type GenerateBody,
@@ -440,6 +441,8 @@ export async function* streamGenerate(
     let finished = false;
     let retry = false;
     let terminalError = false;
+    let pendingFinish: Extract<GatewayMappedEvent, { kind: "finish" }> | null = null;
+    let providerCostUsd: number | undefined;
     try {
       for await (const line of readNdjsonLines(stream)) {
         let parsed: StreamEvent;
@@ -464,6 +467,10 @@ export async function* streamGenerate(
             break;
           }
         }
+        if (parsed.type === "provider-metadata") {
+          providerCostUsd = costFromProviderMetadata(parsed) ?? providerCostUsd;
+          continue;
+        }
         const mapped = mapStreamEvent(parsed);
         if (
           mapped.kind === "text" ||
@@ -473,9 +480,17 @@ export async function* streamGenerate(
         ) {
           emittedVisible = true;
         }
-        if (mapped.kind === "finish") finished = true;
+        if (mapped.kind === "finish") {
+          finished = true;
+          pendingFinish = mapped;
+          continue;
+        }
         if (mapped.kind === "error") terminalError = true;
         yield mapped;
+      }
+      if (pendingFinish) {
+        if (providerCostUsd !== undefined) pendingFinish.usage.costUsd = providerCostUsd;
+        yield pendingFinish;
       }
     } catch (err) {
       if (params.signal?.aborted) throw err;

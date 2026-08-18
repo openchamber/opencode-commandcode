@@ -34,7 +34,7 @@ async function main() {
     LAGUNA_MODEL_ID,
     DEFAULT_MODEL_ID,
   } = await import("../src/constants.ts");
-  const { CommandCodePlugin } = await import("../src/index.ts");
+  const { CommandCodePlugin, commandCodeMetadataExtractor } = await import("../src/index.ts");
   const {
     buildCommandAuthUrl,
     startCommandBrowserLogin,
@@ -68,7 +68,7 @@ async function main() {
     usageToOpenAI,
     withEstimatedCost,
   } = await import("../src/usage.ts");
-  const { usageFromFinishEvent } = await import("../src/gateway-types.ts");
+  const { costFromProviderMetadata, usageFromFinishEvent } = await import("../src/gateway-types.ts");
   const {
     mapStreamEvent,
     buildGenerateBody,
@@ -437,6 +437,14 @@ async function main() {
   const finishOpenAI = usageToOpenAI(finishUsage);
   assert.equal(finishOpenAI.prompt_tokens, 115);
   assert.equal(finishOpenAI.cost_usd, 0.0012);
+  assert.equal(costFromProviderMetadata({
+    providerMetadata: { gateway: { cost: "0.0042" } },
+  }), 0.0042);
+  const metadataExtractor = commandCodeMetadataExtractor().createStreamExtractor();
+  metadataExtractor.processChunk({ usage: { cost_usd: 0.0042 } });
+  assert.deepEqual(metadataExtractor.buildMetadata(), {
+    copilot: { totalNanoAiu: 420_000_000 },
+  });
 
   const estimated = withEstimatedCost(
     {
@@ -521,6 +529,30 @@ async function main() {
     assert.equal(openai.completion_tokens_details?.reasoning_tokens, 3);
     assert.equal(openai.cost_usd, 0.01);
   }
+
+  const billedEvents = [];
+  for await (const event of streamGenerate({
+    apiKey: "test-key",
+    model: LAGUNA_MODEL_ID,
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    postStream: async () => new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(`${JSON.stringify({
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 5, outputTokens: 2 },
+        })}\n`));
+        controller.enqueue(encoder.encode(`${JSON.stringify({
+          type: "provider-metadata",
+          providerMetadata: { gateway: { cost: "0.006" } },
+        })}\n`));
+        controller.close();
+      },
+    }),
+  })) billedEvents.push(event);
+  const billedFinish = billedEvents.find((event) => event.kind === "finish");
+  assert.equal(billedFinish?.kind === "finish" ? billedFinish.usage.costUsd : undefined, 0.006);
 
   // CLI-compatible retry: transient stream error before visible output is
   // discarded, then the exact same request is retried.

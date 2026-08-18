@@ -619,78 +619,78 @@ function safeParse(raw: string): Record<string, unknown> {
   }
 }
 
-function streamOpenAIResponse(
+function upstreamErrorResponse(message: string, status = 502): Response {
+  return Response.json(
+    {
+      error: {
+        message,
+        type: "upstream_error",
+        code: "provider_error",
+      },
+    },
+    { status },
+  );
+}
+
+async function streamOpenAIResponse(
   events: AsyncIterable<unknown>,
   model: string,
   stream: boolean,
   bridge: ParkedBridge,
   includeUsage: boolean,
-): Response {
+): Promise<Response> {
   const completionId = stableCompletionId(bridge.id);
   const created = Math.floor(Date.now() / 1000);
 
   if (!stream) {
-    const bodyStream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        try {
-          let content = "";
-          let reasoning = "";
-          const toolCalls: ParkedToolCall[] = [];
-          let usage = emptyUsage();
-          for await (const event of events) {
-            const mapped = normalizeEvent(event);
-            if (mapped.kind === "park") toolCalls.push(...mapped.tools);
-            else if (mapped.kind === "text") content += mapped.text;
-            else if (mapped.kind === "reasoning") reasoning += mapped.text;
-            else if (mapped.kind === "finish") usage = mapped.usage;
-            else if (mapped.kind === "error") content += `\n\n[command-code error] ${mapped.text}`;
-          }
-          const payload = {
-            id: completionId,
-            object: "chat.completion",
-            created,
-            model,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content,
-                  ...(reasoning ? { reasoning_content: reasoning } : {}),
-                  ...(toolCalls.length
-                    ? {
-                        tool_calls: toolCalls.map((t) => ({
-                          id: t.id,
-                          type: "function",
-                          function: {
-                            name: t.name,
-                            arguments: t.arguments,
-                          },
-                        })),
-                      }
-                    : {}),
-                },
-                finish_reason: toolCalls.length ? "tool_calls" : "stop",
-              },
-            ],
-            ...(includeUsage ? usageChunkFields(usage) : {}),
-          };
-          controller.enqueue(
-            new TextEncoder().encode(JSON.stringify(payload)),
-          );
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          controller.enqueue(
-            new TextEncoder().encode(
-              JSON.stringify({ error: { message, type: "server_error" } }),
-            ),
-          );
-        } finally {
-          controller.close();
+    let content = "";
+    let reasoning = "";
+    const toolCalls: ParkedToolCall[] = [];
+    let usage = emptyUsage();
+    try {
+      for await (const event of events) {
+        const mapped = normalizeEvent(event);
+        if (mapped.kind === "park") toolCalls.push(...mapped.tools);
+        else if (mapped.kind === "text") content += mapped.text;
+        else if (mapped.kind === "reasoning") reasoning += mapped.text;
+        else if (mapped.kind === "finish") usage = mapped.usage;
+        else if (mapped.kind === "error") {
+          deleteBridge(bridge.id);
+          return upstreamErrorResponse(mapped.text);
         }
-      },
-    });
-    return new Response(bodyStream, {
+      }
+    } catch (err) {
+      deleteBridge(bridge.id);
+      return upstreamErrorResponse(err instanceof Error ? err.message : String(err));
+    }
+    const payload = {
+      id: completionId,
+      object: "chat.completion",
+      created,
+      model,
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content,
+            ...(reasoning ? { reasoning_content: reasoning } : {}),
+            ...(toolCalls.length
+              ? {
+                  tool_calls: toolCalls.map((t) => ({
+                    id: t.id,
+                    type: "function",
+                    function: { name: t.name, arguments: t.arguments },
+                  })),
+                }
+              : {}),
+          },
+          finish_reason: toolCalls.length ? "tool_calls" : "stop",
+        },
+      ],
+      ...(includeUsage ? usageChunkFields(usage) : {}),
+    };
+    return new Response(JSON.stringify(payload), {
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -787,38 +787,18 @@ function streamOpenAIResponse(
             usage = mapped.usage;
           }
           if (mapped.kind === "error") {
-            send({
-              id: completionId,
-              object: "chat.completion.chunk",
-              created,
-              model,
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    content: `\n\n[command-code error] ${mapped.text}`,
-                  },
-                  finish_reason: null,
-                },
-              ],
-            });
+            deleteBridge(bridge.id);
+            send({ error: { message: mapped.text, type: "upstream_error", code: "provider_error" } });
+            controller.close();
+            return;
           }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        send({
-          id: completionId,
-          object: "chat.completion.chunk",
-          created,
-          model,
-          choices: [
-            {
-              index: 0,
-              delta: { content: `\n\n[command-code error] ${message}` },
-              finish_reason: null,
-            },
-          ],
-        });
+        deleteBridge(bridge.id);
+        send({ error: { message, type: "upstream_error", code: "provider_error" } });
+        controller.close();
+        return;
       }
 
       send({

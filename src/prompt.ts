@@ -326,6 +326,7 @@ export function openaiMessagesToWire(
 ): { system: string; messages: WireMessage[] } {
   const systemParts: string[] = [];
   const wire: WireMessage[] = [];
+  const toolNames = new Map<string, string>();
 
   for (const msg of messages) {
     const role = msg.role || "";
@@ -350,6 +351,7 @@ export function openaiMessagesToWire(
           const id = tc.id || "";
           const name = tc.function?.name || "";
           if (!id || !name) continue;
+          toolNames.set(id, name);
           let input: Record<string, unknown> = {};
           try {
             input = JSON.parse(tc.function?.arguments || "{}") as Record<
@@ -374,13 +376,19 @@ export function openaiMessagesToWire(
     if (role === "tool") {
       const toolCallId = msg.tool_call_id || "";
       if (!toolCallId) continue;
+      const toolName = msg.name || toolNames.get(toolCallId) || "";
+      if (!toolName) {
+        throw new Error(
+          `Tool result ${toolCallId} has no matching assistant tool call`,
+        );
+      }
       wire.push({
         role: "tool",
         content: [
           {
             type: "tool-result",
             toolCallId,
-            toolName: msg.name ? toWireName(msg.name) : "",
+            toolName: toWireName(toolName),
             output: {
               type: "text",
               value: extractTextContent(msg.content),

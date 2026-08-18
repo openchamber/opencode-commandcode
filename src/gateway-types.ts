@@ -225,3 +225,15 @@ export function addUsage(a: WireUsage, b: WireUsage): WireUsage {
     ...(costUsd > 0 ? { costUsd } : {}),
   };
 }
+
+/** Extract the authoritative billed USD amount from gateway metadata events. */
+export function costFromProviderMetadata(event: unknown): number | undefined {
+  if (!event || typeof event !== "object") return undefined;
+  const providerMetadata = (event as { providerMetadata?: unknown }).providerMetadata;
+  if (!providerMetadata || typeof providerMetadata !== "object") return undefined;
+  const gateway = (providerMetadata as { gateway?: unknown }).gateway;
+  if (!gateway || typeof gateway !== "object") return undefined;
+  const raw = (gateway as { cost?: unknown }).cost;
+  const cost = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+}
