@@ -1,11 +1,11 @@
 /**
  * Comprehensive live matrix against Laguna S 2.1 via the local proxy.
- * Requires Go-plan session (`cmd login` → ~/.commandcode/auth.json).
+ * Requires COMMAND_CODE_API_KEY for direct test execution.
  *
  *   bun run test:live:matrix
  */
 import assert from "node:assert/strict";
-import { readCommandCodeCredentials } from "../src/credentials.ts";
+import { readCommandCodeApiKeyFromEnv } from "../src/credentials.ts";
 import { LAGUNA_MODEL_ID, SESSION_HEADER } from "../src/constants.ts";
 import {
   startProxy,
@@ -18,12 +18,12 @@ import { clearBridges } from "../src/bridge-pool.ts";
 type CaseResult = { name: string; ok: boolean; detail?: string; ms: number };
 
 function requireAuth(): string {
-  const creds = readCommandCodeCredentials();
-  if (!creds?.apiKey) {
-    console.error("Skipping: run `cmd login` (Go plan). No Studio API key.");
+  const key = readCommandCodeApiKeyFromEnv();
+  if (!key) {
+    console.error("Skipping: set COMMAND_CODE_API_KEY.");
     process.exit(0);
   }
-  return creds.apiKey;
+  return key;
 }
 
 async function assertOk(res: Response, label: string): Promise<string> {

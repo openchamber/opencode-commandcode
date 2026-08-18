@@ -11,10 +11,12 @@ export const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible";
 
 export const EFFORT_HEADER = "x-opencode-commandcode-effort";
 export const SESSION_HEADER = "x-opencode-commandcode-session";
+export const REQUEST_KIND_HEADER = "x-opencode-commandcode-request-kind";
 
 export const COMMAND_CODE_API_KEY_ENV = "COMMAND_CODE_API_KEY";
-export const COMMAND_CODE_DIR_NAME = ".commandcode";
-export const COMMAND_CODE_AUTH_FILE = "auth.json";
+
+/** CLI-compatible gateway protocol version implemented by this plugin. */
+export const COMMAND_CODE_GATEWAY_VERSION = "1.27.1";
 
 export const DEFAULT_API_BASE_URL = "https://api.commandcode.ai";
 export const GENERATE_ROUTE = "/alpha/generate";

@@ -1,7 +1,7 @@
 /**
- * Command Code model catalog — discovered dynamically from the installed CLI.
- * Laguna remains the preferred default when present (unlimited free tier for tests),
- * but every model from `cmd --list-models` is exposed in OpenCode.
+ * Command Code model catalog fetched from the public provider API.
+ * Request-time lookups use the last successful snapshot; async lifecycle hooks
+ * refresh it without making the local CLI a runtime dependency.
  */
 import {
   EFFORT_LEVELS,
@@ -11,6 +11,7 @@ import {
 } from "./constants.js";
 import {
   discoverCommandModels,
+  fallbackCommandModels,
   type DiscoveredModelMeta,
   type ModelCostRates,
 } from "./model-discover.js";
@@ -39,6 +40,7 @@ const CATALOG_TTL_MS = 30 * 60 * 1000;
 
 let cachedModels: CommandModel[] | null = null;
 let cachedAt = 0;
+let refreshInFlight: Promise<CommandModel[]> | null = null;
 
 export const GENERATED_VARIANT_KEYS = [
   "none",
@@ -96,26 +98,46 @@ export function invalidateCommandModelCache(): void {
   cachedAt = 0;
 }
 
-/** Force a fresh discovery from the Command Code CLI. */
-export function refreshCommandModels(): CommandModel[] {
-  const discovered = discoverCommandModels().map(metaToModel);
-  cachedModels = normalizeCatalog(discovered);
-  cachedAt = Date.now();
-  log.info("[opencode-commandcode] model catalog refreshed", {
-    count: cachedModels.length,
-  });
-  return cachedModels;
+/** Force a fresh discovery from the public Command Code model API. */
+export async function refreshCommandModels(options?: {
+  fetchFn?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  url?: string;
+}): Promise<CommandModel[]> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const discovered = await discoverCommandModels(options);
+      cachedModels = normalizeCatalog(discovered.map(metaToModel));
+      cachedAt = Date.now();
+      log.info("[opencode-commandcode] model catalog refreshed", { count: cachedModels.length });
+      return cachedModels;
+    } catch (error) {
+      if (cachedModels) {
+        log.warn("[opencode-commandcode] model catalog refresh failed; keeping cached catalog", error instanceof Error ? error.message : error);
+        return cachedModels;
+      }
+      cachedModels = normalizeCatalog(fallbackCommandModels().map(metaToModel));
+      cachedAt = Date.now();
+      log.warn("[opencode-commandcode] model catalog unavailable; using fallback", error instanceof Error ? error.message : error);
+      return cachedModels;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
 /**
- * Live catalog (cached). Discovers via `cmd --list-models` on first use /
- * after TTL expiry — never a hardcoded product list.
+ * Current catalog snapshot for synchronous request translation.
  */
 export function getCommandModels(): CommandModel[] {
-  if (cachedModels && Date.now() - cachedAt < CATALOG_TTL_MS) {
-    return cachedModels;
+  if (!cachedModels) {
+    cachedModels = normalizeCatalog(fallbackCommandModels().map(metaToModel));
   }
-  return refreshCommandModels();
+  if (Date.now() - cachedAt >= CATALOG_TTL_MS && !refreshInFlight) {
+    void refreshCommandModels();
+  }
+  return cachedModels;
 }
 
 /** Snapshot alias used by older call sites / tests. */

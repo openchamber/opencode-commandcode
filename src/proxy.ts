@@ -17,6 +17,7 @@ import { assessContext, compactWireMessages, estimateMessageTokens } from "./com
 import {
   DEFAULT_MODEL_ID,
   LAGUNA_MODEL_ID,
+  REQUEST_KIND_HEADER,
   SESSION_HEADER,
 } from "./constants.js";
 import {
@@ -142,8 +143,8 @@ async function bindProxy(port: number): Promise<number> {
  * - `OPENCODE_COMMANDCODE_PROXY_PORT` → bind that exact port
  * - otherwise prefer `8797`, then scan upward, then fall back to OS ephemeral (`0`)
  */
-export async function startProxy(tokenProvider: TokenProvider): Promise<number> {
-  getAccessToken = tokenProvider;
+export async function startProxy(tokenProvider?: TokenProvider): Promise<number> {
+  if (tokenProvider) getAccessToken = tokenProvider;
   if (server && proxyPort) return proxyPort;
 
   const fixed = envProxyPort();
@@ -283,9 +284,13 @@ async function handleChatCompletions(
   body: ChatCompletionRequest,
 ): Promise<Response> {
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const conversationKey =
+  const isTitleRequest = req.headers.get(REQUEST_KIND_HEADER) === "title";
+  const baseConversationKey =
     req.headers.get(SESSION_HEADER) ||
     conversationKeyFromMessages(messages);
+  const conversationKey = isTitleRequest
+    ? `title:${baseConversationKey}`
+    : baseConversationKey;
   const selection = selectionFromRequest(req, body);
   const modelMeta =
     findCommandModel(selection.modelId) ||
@@ -352,7 +357,7 @@ async function handleChatCompletions(
       {
         error: {
           message:
-            "Not authenticated with Command Code. Run `cmd login` or set COMMAND_CODE_API_KEY, then `opencode auth login --provider command-code`.",
+            "Not authenticated with Command Code. Run `opencode auth login --provider command-code` or set COMMAND_CODE_API_KEY.",
           type: "authentication_error",
         },
       },
@@ -374,6 +379,35 @@ async function handleChatCompletions(
       },
       { status: 400 },
     );
+  }
+
+  if (isTitleRequest) {
+    const bridge: ParkedBridge = {
+      id: randomUUID(),
+      conversationKey,
+      pendingTools: new Map(),
+      createdAt: Date.now(),
+      wireMessages,
+      modelId: model,
+      system,
+      tools: [],
+      apiKey,
+      contextWindow: modelMeta.contextWindow,
+      maxTokens: 128,
+    };
+    const events = (streamGenerateOverride || streamGenerate)({
+      apiKey,
+      model,
+      messages: wireMessages,
+      tools: [],
+      system: system || undefined,
+      maxTokens: 128,
+      temperature: body.temperature,
+      permissionMode: "standard",
+      sessionId: conversationKey,
+      mode: "title-gen",
+    });
+    return streamOpenAIResponse(events, body.model || model, stream, bridge, includeUsage);
   }
 
   // Context / compact pre-check

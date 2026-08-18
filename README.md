@@ -6,31 +6,33 @@
 [![Discord](https://img.shields.io/badge/Discord-join.svg?style=flat&labelColor=100F0F&color=8B7EC8&logo=discord&logoColor=FFFCF0)](https://discord.gg/ZYRSdnwwKA)
 [![License](https://img.shields.io/badge/license-MIT-black?style=flat&labelColor=100F0F&color=EC8B49)](LICENSE)
 
-## Command Code models in OpenCode. Gateway proxy. Go-plan login.
+## Command Code models in OpenCode. Gateway proxy. Browser login.
 
-**opencode-commandcode is the OpenCode plugin for running [Command Code](https://commandcode.ai) models — including Laguna S 2.1 — with tools/MCP, attachments, compact, and usage, through the same gateway the `cmd` CLI uses.**
+**opencode-commandcode is the OpenCode plugin for running [Command Code](https://commandcode.ai) models — including Laguna S 2.1 — with tools/MCP, attachments, compact, and usage. No Command Code CLI installation is required.**
 
-Use Command Code from OpenCode and [OpenChamber](https://github.com/openchamber/openchamber) via Go-plan ($1) browser login and a local OpenAI-compatible proxy that `POST`s to `/alpha/generate`. Sibling plugins: [@openchamber/opencode-cursor](https://github.com/openchamber/opencode-cursor) and [@openchamber/opencode-claude](https://github.com/openchamber/opencode-claude).
+Use Command Code from OpenCode and [OpenChamber](https://github.com/openchamber/openchamber) via browser login and a local OpenAI-compatible proxy that `POST`s to `/alpha/generate`. Sibling plugins: [@openchamber/opencode-cursor](https://github.com/openchamber/opencode-cursor) and [@openchamber/opencode-claude](https://github.com/openchamber/opencode-claude).
 
 ![opencode-commandcode — Command Code in OpenCode, Laguna S 2.1 gateway](docs/header.svg)
 
 ## What you can do
 
-### Sign in with Command Code Go ($1), not a Studio API key
+### Sign in with your Command Code account
 
-`opencode auth login --provider command-code` opens the same browser flow as `cmd login`: Authorize, then paste the key Studio shows (or confirm if the browser already finished). You can also sync an existing `cmd login` session.
+`opencode auth login --provider command-code` opens Command Code Studio in your browser. After you authorize, Studio returns the credential to the plugin's temporary localhost callback and OpenCode stores it through its standard provider auth flow.
 
 ### Talk to the real Command Code gateway
 
-The plugin proxies OpenCode chat to `POST https://api.commandcode.ai/alpha/generate` (`mode=agent`) — the same transport as `npm i -g command-code@latest`.
+The plugin proxies OpenCode chat to `POST https://api.commandcode.ai/alpha/generate` (`mode=agent`).
 
 ### Use Laguna S 2.1 and the live catalog
 
-Default live-test target is **Laguna S 2.1 free** (`poolside/laguna-s-2.1-free`, 256k context, $0). The catalog comes from `cmd --list-models`, not a hardcoded list. Aliases like `laguna` still resolve to the upstream id.
+Default live-test target is **Laguna S 2.1 free** (`poolside/laguna-s-2.1-free`, 256k context, $0). The catalog comes from the public Command Code models API, not a local CLI or hardcoded product list. Aliases like `laguna` still resolve to the upstream id.
 
 ### Keep agent loops, files, and context moving
 
 OpenCode tool calls park and resume. MCP tools configured natively in OpenCode (`mcp:` in `opencode.json`) are mapped both ways — OpenCode's `<server>_<tool>` ↔ the gateway's `mcp__<server>__<tool>` — so the agent sees them and OpenCode executes them with its own MCP clients. Attachments (images, PDFs, text/binary) pass through. Auto-compact tips and tiered client compact run before the 256k window overflows. Per-turn and session usage come from SSE `usage` plus `GET /v1/usage`.
+
+Session titles use Laguna as the provider-local small model and the gateway's constrained `title-gen` mode. This selection applies only when OpenCode requests a small model for the `command-code` provider; it never changes the global `small_model` or another provider's utility model.
 
 ## Quick start
 
@@ -69,16 +71,8 @@ Add (or merge) this into `~/.config/opencode/opencode.json`:
 ### 3. Sign in with Command Code
 
 ```bash
-# Option A — sync from Command Code CLI (recommended)
-npm i -g command-code@latest
-cmd login   # browser → Studio CLI auth (Go plan)
 opencode auth login --provider command-code
-# pick "Use existing cmd login session"
-
-# Option B — browser login inside OpenCode (Go $1)
-opencode auth login --provider command-code
-# pick "Login with Command Code (Go $1)"
-# open the URL, Authorize, then paste the API key (or ok if the browser already finished)
+# open the URL and Authorize; the callback completes automatically
 ```
 
 ### 4. Run a Command Code model
@@ -103,12 +97,12 @@ npm install -g .
 
 | Step | What happens |
 | --- | --- |
-| `opencode auth login --provider command-code` | Starts Go-plan browser login (or offers to sync `cmd login`) |
-| You Authorize in the browser | Studio may show a one-time key to paste |
-| Plugin stores credentials | Mirrored between OpenCode `auth.json` and `~/.commandcode/auth.json` |
-| Session expires | Re-run login or `cmd login` |
+| `opencode auth login --provider command-code` | Starts browser login |
+| You Authorize in the browser | Studio posts the credential to the temporary localhost callback |
+| Callback succeeds | OpenCode stores the provider credential in its auth store |
+| Session expires | Re-run the OpenCode provider login |
 
-**Go-plan browser login is the supported path.** You do not need a separate Studio product API key. The paste-key prompt is part of the same `cmd login` flow.
+**Command Code browser login is the supported path.** You do not need a separate Studio product API key.
 
 ## Architecture
 
@@ -122,17 +116,17 @@ OpenCode
 
 | Layer | Responsibility |
 | --- | --- |
-| **Plugin hooks** | Go-plan OAuth, provider config, live catalog, credential sync |
+| **Plugin hooks** | Command Code OAuth, provider config, live catalog |
 | **Proxy** | OpenAI ↔ Command Code gateway, tools/MCP, attachments, compact, usage |
 | **Transport** | `POST /alpha/generate` to `api.commandcode.ai` |
 
-Model catalog: live from `cmd --list-models`, with context, reasoning efforts, and the installed CLI’s text-only/vision registry. Each upstream model appears once in OpenCode; request aliases still resolve to the gateway id.
+Model catalog: live from `GET https://api.commandcode.ai/provider/v1/models`, cached for request-time lookups with a minimal Laguna fallback when the endpoint is unavailable. Each upstream model appears once in OpenCode; request aliases still resolve to the gateway id.
 
 ## Requirements
 
 - [OpenCode](https://opencode.ai)
-- [Command Code CLI](https://www.npmjs.com/package/command-code) (`npm i -g command-code@latest`) and a Go-plan account
-- Bun (plugin runtime) · Node.js ≥ 18 (CLI needs ≥ 22)
+- A Command Code account
+- Bun (plugin runtime) · Node.js ≥ 18
 
 ## Development
 
@@ -140,7 +134,7 @@ Model catalog: live from `cmd --list-models`, with context, reasoning efforts, a
 bun install
 bun run build
 bun run test          # mocked gateway — attachments, tools, compact, usage
-bun run test:live     # live Laguna S 2.1 (needs `cmd login` / Go plan session)
+COMMAND_CODE_API_KEY=... bun run test:live  # optional live Laguna test
 ```
 
 Debug logging: `OPENCODE_COMMANDCODE_DEBUG=1`.
@@ -163,8 +157,8 @@ Local pin refresh after a release:
 | --- | --- |
 | Unknown provider `command-code` | Install `@openchamber/opencode-commandcode` and restart OpenCode |
 | Command Code missing from provider list | Confirm `plugin` includes `@openchamber/opencode-commandcode` and restart |
-| Need a Studio API key? | No — use Go-plan browser login or sync from `cmd login` |
-| Only Laguna models? | No — the plugin loads the full live catalog from `cmd --list-models` |
+| Need a Studio API key? | No — use the OpenCode browser login |
+| Only Laguna models? | No — the plugin loads the full live catalog from the public models API |
 | Laguna S 2.1 free rejected | Needs an active Go (or higher) account with credits on file |
 
 ## Contributing
@@ -183,7 +177,7 @@ This plugin started as community work around Command Code access in OpenCode. Sp
 
 - [OpenCode](https://opencode.ai) for the plugin API
 - [OpenChamber](https://github.com/openchamber/openchamber) for the workspace that runs this plugin in production
-- [Command Code](https://commandcode.ai) for the gateway and Go-plan login
+- [Command Code](https://commandcode.ai) for the gateway and browser login
 - Contributors who shaped OAuth, the live catalog, and the `/alpha/generate` proxy
 
 Related plugins: [@openchamber/opencode-cursor](https://github.com/openchamber/opencode-cursor), [@openchamber/opencode-claude](https://github.com/openchamber/opencode-claude).

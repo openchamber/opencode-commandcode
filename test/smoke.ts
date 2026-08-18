@@ -4,24 +4,9 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
-function snapshotFile(path: string): { path: string; content: Buffer | null } {
-  return { path, content: existsSync(path) ? readFileSync(path) : null };
-}
-
-function restoreFile(snapshot: { path: string; content: Buffer | null }): void {
-  if (snapshot.content) writeFileSync(snapshot.path, snapshot.content);
-  else if (existsSync(snapshot.path)) unlinkSync(snapshot.path);
-}
 
 async function main() {
   const {
-    listCommandAuthCandidates,
-    parseAuthFile,
-    extractApiKeyFromAuthFile,
     readCommandCodeApiKeyFromEnv,
   } = await import("../src/credentials.ts");
   const {
@@ -34,9 +19,8 @@ async function main() {
     findCommandModel,
   } = await import("../src/models.ts");
   const {
-    parseListModelsOutput,
-    parseModelsMarkdown,
-    parseAdvertisedCost,
+    discoverCommandModels,
+    parseProviderModelCatalog,
   } = await import("../src/model-discover.ts");
   const {
     encodeCommandModelSelection,
@@ -55,7 +39,7 @@ async function main() {
     buildCommandAuthUrl,
     startCommandBrowserLogin,
     resetPendingCommandLogin,
-    completeCommandLoginWithCode,
+    completeCommandBrowserLogin,
   } = await import("../src/auth-login.ts");
   const {
     startProxy,
@@ -95,7 +79,6 @@ async function main() {
   } = await import(
     "../src/gateway.ts"
   );
-  const { detectCommandCode } = await import("../src/detect.ts");
   const {
     setMcpServers,
     getMcpServers,
@@ -106,11 +89,6 @@ async function main() {
   } = await import("../src/mcp-names.ts");
 
   // --- credentials ---
-  assert.ok(listCommandAuthCandidates().length > 0);
-  assert.equal(
-    extractApiKeyFromAuthFile(parseAuthFile(JSON.stringify({ apiKey: "k1" }))),
-    "k1",
-  );
   assert.equal(
     readCommandCodeApiKeyFromEnv({ COMMAND_CODE_API_KEY: " tok " }),
     "tok",
@@ -119,7 +97,22 @@ async function main() {
 
   // --- models (dynamic catalog) ---
   invalidateCommandModelCache();
-  const models = refreshCommandModels();
+  const models = await refreshCommandModels({
+    fetchFn: async () => new Response(JSON.stringify({
+      data: [
+        {
+          id: LAGUNA_MODEL_ID,
+          name: "Laguna S 2.1",
+          context_length: 256_000,
+        },
+        {
+          id: "deepseek/deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          context_length: 1_000_000,
+        },
+      ],
+    })),
+  });
   assert.ok(models.length >= 1, "expected at least one discovered model");
   assert.equal(isLoginPlaceholderModel("login"), true);
   if (models.some((m) => m.resolvedId === LAGUNA_MODEL_ID)) {
@@ -144,49 +137,20 @@ async function main() {
     "Laguna must appear once in the picker",
   );
 
-  const parsedList = parseListModelsOutput(`
-Available models  ·  2 models
-
-Open Source
-
-deepseek/deepseek-v4-pro             hybrid reasoning
-poolside/laguna-s-2.1-free           FREE open-weight
-
-Anthropic
-
-claude-sonnet-5                      recommended
-`);
-  assert.equal(parsedList.length, 3);
-  assert.equal(parsedList[0]?.id, "deepseek/deepseek-v4-pro");
-  const md = parseModelsMarkdown(`
-| Id | Name | Context | Efforts | $/1M in/out · cache read | Best for |
-|---|---|---|---|---|---|
-| \`poolside/laguna-s-2.1-free\` | Laguna S 2.1 | 256K | — | $0/$0 · cache $0 | coding |
-| \`claude-sonnet-5\` | Claude Sonnet 5 | 1M | low, medium, high, xhigh, max | $3/$15 · cache $0.3 (write $3.75) | agents |
-| \`deepseek/deepseek-v4-pro\` | DeepSeek V4 Pro | 1M | high, max | $0.435/$0.87 · cache $0.003625 | reasoning |
-`);
-  assert.equal(md.get("claude-sonnet-5")?.contextWindow, 1_000_000);
-  assert.deepEqual(md.get("claude-sonnet-5")?.efforts, [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-  ]);
-  assert.deepEqual(md.get("claude-sonnet-5")?.cost, {
-    input: 3,
-    output: 15,
-    cache: { read: 0.3, write: 3.75 },
+  assert.deepEqual(parseProviderModelCatalog({
+    object: "list",
+    data: [
+      { id: "model/a", name: "Model A", context_length: 1_000_000 },
+      { id: "", name: "invalid" },
+    ],
+  }), [{ id: "model/a", name: "Model A", contextLength: 1_000_000 }]);
+  const fetched = await discoverCommandModels({
+    fetchFn: async () => new Response(JSON.stringify({
+      data: [{ id: "model/a", name: "Model A", context_length: 128_000 }],
+    })),
   });
-  assert.deepEqual(md.get("deepseek/deepseek-v4-pro")?.cost, {
-    input: 0.435,
-    output: 0.87,
-    cache: { read: 0.003625, write: 0 },
-  });
-  assert.deepEqual(
-    parseAdvertisedCost("$2/$10 · cache $0.2 (write $2.5)"),
-    { input: 2, output: 10, cache: { read: 0.2, write: 2.5 } },
-  );
+  assert.equal(fetched[0]?.id, "model/a");
+  assert.equal(fetched[0]?.contextWindow, 128_000);
 
   const selection = resolveCommandModelSelection("laguna", "high");
   const encoded = encodeCommandModelSelection(selection);
@@ -600,34 +564,15 @@ claude-sonnet-5                      recommended
     assert.deepEqual(retryEvents, ["retry-ok"]);
   }
 
-  // --- detect (CLI may be present in this env) ---
-  const detection = await detectCommandCode();
-  assert.ok(
-    detection.status === "ready" ||
-      detection.status === "needs-login" ||
-      detection.status === "missing-cli",
-  );
-
-  // --- Go-plan browser OAuth URL (same as cmd login) ---
+  // --- Browser OAuth URL ---
   const authUrl = buildCommandAuthUrl(5959, "test-state");
   assert.ok(authUrl.includes("commandcode.ai/studio/auth/cli"));
   assert.ok(authUrl.includes("callback="));
   assert.ok(authUrl.includes("localhost%3A5959") || authUrl.includes("localhost:5959"));
   assert.ok(authUrl.includes("state=test-state"));
 
-  // The callback completion mirrors credentials into the real CLI/OpenCode
-  // auth files. Snapshot both so a smoke test can never replace live auth.
-  const authSnapshots = [
-    snapshotFile(join(homedir(), ".commandcode", "auth.json")),
-    snapshotFile(
-      join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "auth.json",
-      ),
-    ),
-  ];
   const pendingLogin = await startCommandBrowserLogin();
+  const completion = completeCommandBrowserLogin();
   assert.ok(pendingLogin.url.includes("/studio/auth/cli"));
   assert.ok(pendingLogin.port >= 5959);
   // Callback server must answer Private Network Access preflight (Studio → localhost).
@@ -652,7 +597,7 @@ claude-sonnet-5                      recommended
       preflight.headers.get("access-control-allow-private-network"),
       "true",
     );
-    // Simulate Studio POST → then finish via paste-code path with "ok".
+    // Simulate Studio POST; callback returns tokens for OpenCode to persist.
     const post = await fetch(
       `http://127.0.0.1:${pendingLogin.port}/callback`,
       {
@@ -671,20 +616,19 @@ claude-sonnet-5                      recommended
       },
     );
     assert.equal(post.status, 200);
-    const tokens = await completeCommandLoginWithCode("ok");
+    const tokens = await completion;
     assert.equal(tokens.access, "test-session-key-from-studio-callback");
     assert.equal(tokens.key, "test-session-key-from-studio-callback");
   } finally {
     resetPendingCommandLogin();
-    for (const snapshot of authSnapshots) restoreFile(snapshot);
   }
 
-  // --- plugin auth methods: oauth code paste, no standalone API-key method ---
+  // --- plugin auth method: automatic browser callback, no standalone API-key method ---
   {
     const hooks = await CommandCodePlugin({} as any);
     assert.ok(hooks.auth);
     const methods = hooks.auth!.methods;
-    assert.ok(Array.isArray(methods) && methods.length >= 1);
+    assert.equal(methods.length, 1);
     assert.ok(
       !methods.some(
         (m: any) =>
@@ -701,22 +645,44 @@ claude-sonnet-5                      recommended
         m.label.includes("Login with Command Code"),
     ) as any;
     assert.ok(goLogin, "Go login oauth method missing");
-    // Without an existing CLI session, authorize should return method "code".
-    // (If env already has cmd credentials, it returns auto — still valid.)
+    // Browser login completes through the local callback, so OpenCode must call
+    // the plugin callback immediately and wait rather than ask for a pasted code.
     const authStart = await goLogin.authorize();
     assert.ok(authStart.url);
-    assert.ok(
-      authStart.method === "code" || authStart.method === "auto",
-      `unexpected auth method ${authStart.method}`,
-    );
-    if (authStart.method === "code") {
-      assert.ok(authStart.url.includes("/studio/auth/cli"));
+    assert.equal(authStart.method, "auto");
+    if (authStart.url.includes("/studio/auth/cli")) {
       assert.ok(
-        /paste/i.test(authStart.instructions || ""),
-        "code-flow instructions should mention paste",
+        !/paste/i.test(authStart.instructions || ""),
+        "automatic callback instructions must not ask for a pasted code",
       );
     }
     resetPendingCommandLogin();
+
+    const lagunaModel = { id: LAGUNA_MODEL_ID, providerID: PROVIDER_ID };
+    const smallOutput: { model?: unknown } = {};
+    await hooks["experimental.provider.small_model"]!(
+      { provider: { id: PROVIDER_ID, models: { [LAGUNA_MODEL_ID]: lagunaModel } } } as any,
+      smallOutput as any,
+    );
+    assert.equal(smallOutput.model, lagunaModel);
+    const otherOutput: { model?: unknown } = {};
+    await hooks["experimental.provider.small_model"]!(
+      { provider: { id: "other", models: { [LAGUNA_MODEL_ID]: lagunaModel } } } as any,
+      otherOutput as any,
+    );
+    assert.equal(otherOutput.model, undefined);
+
+    const titleHeaders = { headers: {} as Record<string, string> };
+    await hooks["chat.headers"]!(
+      {
+        sessionID: "title-session",
+        agent: "title",
+        model: { providerID: PROVIDER_ID, id: LAGUNA_MODEL_ID },
+        message: { model: {} },
+      } as any,
+      titleHeaders,
+    );
+    assert.equal(titleHeaders.headers["x-opencode-commandcode-request-kind"], "title");
   }
 
   // --- plugin export ---
@@ -727,7 +693,9 @@ claude-sonnet-5                      recommended
   await stopProxy();
   resetUsageStore();
 
+  const capturedGenerateParams: Array<Record<string, unknown>> = [];
   setStreamGenerateForTests(async function* (params) {
+    capturedGenerateParams.push(params as unknown as Record<string, unknown>);
     // Simulate tool-call then finish on first turn with tools; plain text otherwise.
     const last = params.messages[params.messages.length - 1];
     const hasToolResult =
@@ -794,6 +762,7 @@ claude-sonnet-5                      recommended
   });
 
   const port = await startProxy(async () => "test-api-key");
+  await startProxy();
   assert.ok(port > 0);
   assert.equal(getProxyPort(), port);
   assert.ok(getCommandProxyBaseUrl().includes(String(port)));
@@ -825,6 +794,34 @@ claude-sonnet-5                      recommended
   assert.ok(chat1Text.includes("Laguna hello."));
   assert.ok(chat1Text.includes("usage"));
   assert.ok(chat1Text.includes("[DONE]"));
+
+  // Title generation uses the dedicated utility mode and no agent state.
+  const titleResponse = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-opencode-commandcode-session": "test-sess-title",
+      "x-opencode-commandcode-request-kind": "title",
+    },
+    body: JSON.stringify({
+      model: "laguna-s-2.1-free",
+      stream: true,
+      messages: [
+        { role: "system", content: "You generate short session titles." },
+        { role: "user", content: "Generate a title for this conversation:\nFix OAuth loading" },
+      ],
+      tools: [{ type: "function", function: { name: "should_not_run", parameters: {} } }],
+    }),
+  });
+  assert.equal(titleResponse.status, 200);
+  await titleResponse.text();
+  const titleParams = capturedGenerateParams.at(-1)!;
+  assert.equal(titleParams.mode, "title-gen");
+  assert.equal(titleParams.sessionId, "title:test-sess-title");
+  assert.equal(titleParams.maxTokens, 128);
+  assert.deepEqual(titleParams.tools, []);
+  assert.equal(titleParams.skills, undefined);
+  assert.equal(titleParams.effort, undefined);
 
   // Attachment completion
   const chatAtt = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {

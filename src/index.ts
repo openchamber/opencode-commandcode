@@ -2,9 +2,9 @@
  * OpenCode Command Code Auth Plugin
  *
  * Enables Command Code models inside OpenCode via:
- * 1. Go-plan browser login (`cmd login` style: open URL, then paste the key)
+ * 1. Command Code browser login with a local callback
  * 2. Local OpenAI-compatible proxy → api.commandcode.ai /alpha/generate
- * 3. Dynamic model catalog from `cmd --list-models`
+ * 3. Dynamic model catalog from the public Command Code API
  * 4. Tools/MCP park-resume, attachments, compact, and usage accounting
  *
  * Register in opencode.json:
@@ -12,20 +12,22 @@
  */
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import {
-  completeCommandLoginWithCode,
+  completeCommandBrowserLogin,
   getPendingCommandLogin,
   resetPendingCommandLogin,
   startCommandBrowserLogin,
-  syncCommandCodeCredentialsToOpenCode,
 } from "./auth-login.js";
 import {
   DEFAULT_MODEL_ID,
   EFFORT_HEADER,
+  LAGUNA_MODEL_ID,
   OPENAI_COMPATIBLE_NPM,
   PROVIDER_ID,
+  REQUEST_KIND_HEADER,
   SESSION_HEADER,
 } from "./constants.js";
 import { log } from "./log.js";
+import { readCommandCodeApiKeyFromEnv } from "./credentials.js";
 import { setMcpServers } from "./mcp-names.js";
 import {
   encodeCommandModelSelection,
@@ -218,7 +220,6 @@ function ensureProviderConfig(
 }
 
 async function resolveAccessToken(
-  input: PluginInput,
   getAuth: () => Promise<unknown>,
 ): Promise<string | null> {
   const auth = await getAuth();
@@ -227,32 +228,16 @@ async function resolveAccessToken(
     if (key) return key;
   }
 
-  const synced = syncCommandCodeCredentialsToOpenCode();
-  if (synced) {
-    try {
-      await input.client.auth.set({
-        path: { id: PROVIDER_ID },
-        body: {
-          type: "api",
-          key: synced.key || synced.access,
-        },
-      });
-    } catch {
-      // auth.set may be unavailable in some hosts
-    }
-    return synced.access;
-  }
-  return null;
+  return readCommandCodeApiKeyFromEnv();
 }
 
 async function loadRuntime(
-  input: PluginInput,
   getAuth: () => Promise<unknown>,
   provider?: { models?: Record<string, unknown> },
 ): Promise<{ port: number; providerModels: Record<string, unknown> } | undefined> {
-  await resolveAccessToken(input, getAuth);
-  const models = refreshCommandModels();
-  await startProxy(async () => resolveAccessToken(input, getAuth));
+  await resolveAccessToken(getAuth);
+  const models = await refreshCommandModels();
+  await startProxy(async () => resolveAccessToken(getAuth));
   const providerModels = buildProviderModels(models);
   if (provider) provider.models = providerModels;
   return { port: getProxyPort() ?? 8797, providerModels };
@@ -262,43 +247,16 @@ async function loadRuntime(
  * OpenCode plugin that provides Command Code authentication and model access.
  */
 export const CommandCodePlugin: Plugin = async (
-  input: PluginInput,
+  _input: PluginInput,
 ): Promise<Hooks> => {
-  try {
-    syncCommandCodeCredentialsToOpenCode();
-  } catch (err) {
-    log.warn(
-      "[opencode-commandcode] CLI credential sync skipped",
-      err instanceof Error ? err.message : err,
-    );
-  }
-
   return {
     async config(config) {
       // Bind proxy first so provider baseURL matches the actual listening port.
-      await startProxy(async () => {
-        try {
-          const authClient = input.client.auth as {
-            get?: (args: { path: { id: string } }) => Promise<unknown>;
-          };
-          if (typeof authClient.get === "function") {
-            const auth = await authClient.get({ path: { id: PROVIDER_ID } });
-            const payload =
-              auth && typeof auth === "object" && "data" in auth
-                ? (auth as { data: unknown }).data
-                : auth;
-            return resolveAccessToken(input, async () => payload);
-          }
-        } catch {
-          // ignore
-        }
-        const synced = syncCommandCodeCredentialsToOpenCode();
-        return synced?.access ?? null;
-      });
+      await startProxy();
 
       // Always seed the live catalog so the provider is discoverable.
-      refreshCommandModels();
-      ensureProviderConfig(config as Record<string, any>, getCommandModels());
+      const models = await refreshCommandModels();
+      ensureProviderConfig(config as Record<string, any>, models);
 
       // Seed native MCP server names (from `mcp:` in opencode config) so the
       // proxy can map tool names <server>_<tool> ↔ mcp__<server>__<tool>.
@@ -334,6 +292,9 @@ export const CommandCodePlugin: Plugin = async (
       if (hookInput.sessionID) {
         output.headers[SESSION_HEADER] = hookInput.sessionID;
       }
+      if (hookInput.agent === "title") {
+        output.headers[REQUEST_KIND_HEADER] = "title";
+      }
     },
 
     "chat.params": async (hookInput, output) => {
@@ -341,11 +302,16 @@ export const CommandCodePlugin: Plugin = async (
       delete output.options.reasoningEffort;
     },
 
+    "experimental.provider.small_model": async (hookInput, output) => {
+      if (hookInput.provider.id !== PROVIDER_ID) return;
+      output.model = Object.values(hookInput.provider.models)
+        .find((model) => model.id === LAGUNA_MODEL_ID);
+    },
+
     provider: {
       id: PROVIDER_ID,
       async models(provider, ctx) {
         const runtime = await loadRuntime(
-          input,
           async () => ctx.auth,
           provider,
         );
@@ -357,7 +323,7 @@ export const CommandCodePlugin: Plugin = async (
       provider: PROVIDER_ID,
 
       async loader(getAuth, provider) {
-        const runtime = await loadRuntime(input, getAuth, provider);
+        const runtime = await loadRuntime(getAuth, provider);
         if (!runtime) return {};
 
         return {
@@ -387,27 +353,8 @@ export const CommandCodePlugin: Plugin = async (
       methods: [
         {
           type: "oauth",
-          label: "Login with Command Code (Go $1)",
+          label: "Login with Command Code",
           async authorize() {
-            // Prefer already-logged-in CLI session from `cmd login`.
-            const synced = syncCommandCodeCredentialsToOpenCode();
-            if (synced) {
-              return {
-                url: "https://commandcode.ai/docs/plans/go",
-                instructions:
-                  "Command Code Go-plan session found (from `cmd login`). Click Complete — no paste needed.",
-                method: "auto" as const,
-                async callback() {
-                  return {
-                    type: "success" as const,
-                    refresh: synced.refresh,
-                    access: synced.access,
-                    expires: synced.expires,
-                  };
-                },
-              };
-            }
-
             let current = getPendingCommandLogin();
             if (!current || current.completed) {
               current = await startCommandBrowserLogin();
@@ -416,12 +363,12 @@ export const CommandCodePlugin: Plugin = async (
             return {
               url: current.url,
               instructions:
-                "Open the URL, click Authorize, then paste the API key Studio shows (or paste ok if the browser says you're all set). Same flow as `cmd login`.",
-              method: "code" as const,
-              async callback(code: string) {
+                "Open the URL and click Authorize. Return here after the browser says you're all set.",
+              method: "auto" as const,
+              async callback() {
                 try {
-                  const tokens = await completeCommandLoginWithCode(code);
-                  refreshCommandModels();
+                  const tokens = await completeCommandBrowserLogin();
+                  await refreshCommandModels();
                   return {
                     type: "success" as const,
                     refresh: tokens.refresh,
@@ -431,33 +378,11 @@ export const CommandCodePlugin: Plugin = async (
                 } catch (err) {
                   resetPendingCommandLogin();
                   log.error(
-                    "[opencode-commandcode] Go-plan login failed",
+                    "[opencode-commandcode] Command Code login failed",
                     err instanceof Error ? err.message : err,
                   );
                   return { type: "failed" as const };
                 }
-              },
-            };
-          },
-        },
-        {
-          type: "oauth",
-          label: "Use existing `cmd login` session",
-          async authorize() {
-            return {
-              url: "https://commandcode.ai/docs/quickstart",
-              instructions:
-                "If you already ran `npm i -g command-code@latest && cmd login` (Go $1 plan), click Complete to sync ~/.commandcode/auth.json.",
-              method: "auto" as const,
-              async callback() {
-                const again = syncCommandCodeCredentialsToOpenCode();
-                if (!again) return { type: "failed" as const };
-                return {
-                  type: "success" as const,
-                  refresh: again.refresh,
-                  access: again.access,
-                  expires: again.expires,
-                };
               },
             };
           },
@@ -469,7 +394,6 @@ export const CommandCodePlugin: Plugin = async (
 
 export default CommandCodePlugin;
 
-export { detectCommandCode } from "./detect.js";
 export {
   getCommandModels,
   listCommandCodeModels,

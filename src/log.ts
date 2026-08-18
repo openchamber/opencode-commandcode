@@ -1,7 +1,5 @@
 import {
   COMMAND_CODE_API_KEY_ENV,
-  COMMAND_CODE_AUTH_FILE,
-  COMMAND_CODE_DIR_NAME,
   DEFAULT_API_BASE_URL,
 } from "./constants.js";
 
@@ -35,14 +33,6 @@ export function getApiBaseUrl(
         ? env.OPENCODE_COMMANDCODE_API_URL.trim()
         : "";
   return (raw || DEFAULT_API_BASE_URL).replace(/\/$/, "");
-}
-
-export function getCommandCodeDirName(): string {
-  return COMMAND_CODE_DIR_NAME;
-}
-
-export function getCommandCodeAuthFileName(): string {
-  return COMMAND_CODE_AUTH_FILE;
 }
 
 export function getApiKeyEnvName(): string {

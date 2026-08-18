@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { spawnSync } from "node:child_process";
+import { COMMAND_CODE_GATEWAY_VERSION } from "./constants.js";
 import {
   GENERATE_ROUTE,
   usageFromFinishEvent,
@@ -16,9 +17,6 @@ import {
   type WireUsage,
 } from "./gateway-types.js";
 import { log } from "./log.js";
-import { resolveCommandCodeExecutable } from "./executable-path.js";
-
-let cachedCliVersion: string | null = null;
 const MODEL_CALL_MAX_ATTEMPTS = 10;
 const MODEL_CALL_BACKOFF_MIN_MS = 1_000;
 const MODEL_CALL_BACKOFF_MAX_MS = 10_000;
@@ -29,19 +27,7 @@ const TERMINAL_ERROR_MARKERS = [
 ];
 
 function cliVersion(): string {
-  if (cachedCliVersion) return cachedCliVersion;
-  const executable = resolveCommandCodeExecutable();
-  if (executable) {
-    const result = spawnSync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 4_000,
-      env: process.env,
-      windowsHide: true,
-    });
-    const match = `${result.stdout || ""} ${result.stderr || ""}`.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/);
-    if (match) return (cachedCliVersion = match[0]);
-  }
-  return "unknown";
+  return COMMAND_CODE_GATEWAY_VERSION;
 }
 
 function gitValue(cwd: string, args: string[]): string {
@@ -151,6 +137,7 @@ export type GatewayGenerateParams = {
   permissionMode?: "standard" | "auto-accept" | "plan";
   threadId?: string;
   sessionId?: string;
+  mode?: GenerateBody["mode"];
   signal?: AbortSignal;
   /** Injected for tests. */
   fetchFn?: typeof fetch;
@@ -239,7 +226,7 @@ export function buildGenerateBody(
     permissionMode: params.permissionMode || "auto-accept",
     ...(params.threadId ? { threadId: params.threadId } : {}),
     // Feature mode — must be a gateway feature id, not "default".
-    mode: "agent",
+    mode: params.mode ?? "agent",
     params: {
       model: params.model,
       messages: params.messages,
@@ -399,6 +386,7 @@ export async function* streamGenerate(
         const url = `${baseUrl}${GENERATE_ROUTE}`;
         log.info("[opencode-commandcode] POST /alpha/generate", {
           model: params.model,
+          mode: body.mode,
           toolCount: params.tools?.length ?? 0,
           messageCount: params.messages.length,
           attempt: attempt + 1,
