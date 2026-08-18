@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/opencode-commandcode",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Command Code in OpenCode — browser OAuth, gateway proxy, models, tools/MCP, attachments, compact, usage.",
   "license": "MIT",
   "type": "module",
